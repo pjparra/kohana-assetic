@@ -26,26 +26,25 @@ use Assetic\FilterManager;
  */
 class AssetFactory
 {
-    private $baseDir;
+    private $root;
     private $debug;
-    private $defaultOutput;
+    private $output;
     private $workers;
     private $am;
     private $fm;
-
-    /**
+	
+	/**
      * Constructor.
      *
-     * @param string  $baseDir       Path to the base directory for relative URLs
-     * @param Boolean $debug         Filters prefixed with a "?" will be omitted in debug mode
-     * @param string  $defaultOutput The default output string
+     * @param string  $root   The default root directory
+     * @param string  $output The default output string
+     * @param Boolean $debug  Filters prefixed with a "?" will be omitted in debug mode
      */
-    public function __construct($baseDir, $debug = false, $defaultOutput = 'assets/*')
+    public function __construct($root, $debug = false)
     {
-        
-        $this->baseDir = rtrim($baseDir, '/').'/';
-        $this->debug = $debug;
-        $this->defaultOutput = $defaultOutput;
+        $this->root    = rtrim($root, '/');
+        $this->debug   = $debug;
+        $this->output  = 'assetic/*';
         $this->workers = array();
     }
 
@@ -67,6 +66,16 @@ class AssetFactory
     public function isDebug()
     {
         return $this->debug;
+    }
+	
+	/**
+     * Sets the default output string.
+     *
+     * @param string $output The default output string
+     */
+    public function setDefaultOutput($output)
+    {
+        $this->output = $output;
     }
 
     /**
@@ -130,7 +139,7 @@ class AssetFactory
         }
 
         if (!isset($options['output'])) {
-            $options['output'] = $this->defaultOutput;
+            $options['output'] = $this->output;
         }
 
         if (!isset($options['name'])) {
@@ -176,39 +185,49 @@ class AssetFactory
     {
         return substr(sha1(serialize(array_merge($inputs, $filters))), 0, 7);
     }
-
-    /**
+	
+	/**
      * Parses an input string string into an asset.
      *
      * The input string can be one of the following:
      *
      *  * A reference:     If the string starts with an "at" sign it will be interpreted as a reference to an asset in the asset manager
-     *  * An absolute URL: If the string contains "://" it will be interpreted as a remote asset
+     *  * An absolute URL: If the string contains "://" or starts with "//" it will be interpreted as an HTTP asset
      *  * A glob:          If the string contains a "*" it will be interpreted as a glob
-     *  * A path:          Otherwise the string is interpreted as a path
+     *  * A path:          Otherwise the string is interpreted as a filesystem path
      *
-     * Both globs and paths will be absolutized using the current base directory.
+     * Both globs and paths will be absolutized using the current root directory.
      *
-     * @param string $input An input string
+     * @param string $input   An input string
+     * @param array  $options An array of options
      *
      * @return AssetInterface An asset
      */
-    protected function parseInput($input)
+    protected function parseInput($input, array $options = array())
     {
         if ('@' == $input[0]) {
             return $this->createAssetReference(substr($input, 1));
         }
 
-        if (false !== strpos($input, '://')) {
-            return $this->createFileAsset($input, $input);
+        if (false !== strpos($input, '://') || 0 === strpos($input, '//')) {
+            return $this->createHttpAsset($input);
         }
 
-        $baseDir = self::isAbsolutePath($input) ? '' : $this->baseDir;
-
-        if (false !== strpos($input, '*')) {
-            return $this->createGlobAsset($baseDir . $input, $this->baseDir);
+        if (self::isAbsolutePath($input)) {
+            if ($root = self::findRootDir($input, $options['root'])) {
+                $path = ltrim(substr($input, strlen($root)), '/');
+            } else {
+                $path = null;
+            }
         } else {
-            return $this->createFileAsset($baseDir . $input, $input);
+            $root  = $this->root;
+            $path  = $input;
+            $input = $this->root.'/'.$path;
+        }
+        if (false !== strpos($input, '*')) {
+            return $this->createGlobAsset($input, $root);
+        } else {
+            return $this->createFileAsset($input, $root, $path);
         }
     }
 
@@ -231,9 +250,9 @@ class AssetFactory
         return new GlobAsset($glob, array(), $baseDir);
     }
 
-    protected function createFileAsset($path, $sourceUrl = null)
+    protected function createFileAsset($source, $root = null, $path = null)
     {
-        return new FileAsset($path, array(), $sourceUrl);
+        return new FileAsset($source, array(), $root, $path);
     }
 
     protected function getFilter($name)
